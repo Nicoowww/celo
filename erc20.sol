@@ -1,71 +1,143 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+// SPDX-License-Identifier: UNLICENSED
 
-import "./IERC20.sol";
+pragma solidity ^0.8.17;
 
-contract ERC20 is IERC20 {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(
-        address indexed owner, address indexed spender, uint256 value
-    );
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-    string public name;
-    string public symbol;
-    uint8 public decimals;
+contract WeightedVoting is ERC20 {
+string private salt = "Babased";
+using EnumerableSet for EnumerableSet.AddressSet;
 
-    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
-        name = _name;
-        symbol = _symbol;
-        decimals = _decimals;
-    }
+error TokensClaimed();
+error AllTokensClaimed();
+error NoTokensHeld();
+error QuorumTooHigh();
+error AlreadyVoted();
+error VotingClosed();
 
-    function transfer(address recipient, uint256 amount)
-        external
-        returns (bool)
-    {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[recipient] += amount;
-        emit Transfer(msg.sender, recipient, amount);
-        return true;
-    }
+struct Issue {
+EnumerableSet.AddressSet voters;
+string issueDesc;
+uint256 quorum;
+uint256 totalVotes;
+uint256 votesFor;
+uint256 votesAgainst;
+uint256 votesAbstain;
+bool passed;
+bool closed;
+}
+struct SerializedIssue {
+address[] voters;
+string issueDesc;
+uint256 quorum;
+uint256 totalVotes;
+uint256 votesFor;
+uint256 votesAgainst;
+uint256 votesAbstain;
+bool passed;
+bool closed;
+}
 
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
+enum Vote {
+AGAINST,
+FOR,
+ABSTAIN
+}
+Issue[] internal issues;
+mapping(address => bool) public tokensClaimed;
+uint256 public maxSupply = 1000000;
+uint256 public claimAmount = 100;
+string saltt = "any";
 
-    function transferFrom(address sender, address recipient, uint256 amount)
-        external
-        returns (bool)
-    {
-        allowance[sender][msg.sender] -= amount;
-        balanceOf[sender] -= amount;
-        balanceOf[recipient] += amount;
-        emit Transfer(sender, recipient, amount);
-        return true;
-    }
+constructor(string memory _name, string memory _symbol)
+ERC20(_name, _symbol)
+{
+issues.push();
+}
 
-    function _mint(address to, uint256 amount) internal {
-        balanceOf[to] += amount;
-        totalSupply += amount;
-        emit Transfer(address(0), to, amount);
-    }
 
-    function _burn(address from, uint256 amount) internal {
-        balanceOf[from] -= amount;
-        totalSupply -= amount;
-        emit Transfer(from, address(0), amount);
-    }
+function claim() public {
+if (totalSupply() + claimAmount > maxSupply) {
+revert AllTokensClaimed();
+}
+if (tokensClaimed[msg.sender]) {
+revert TokensClaimed();
+}
+_mint(msg.sender, claimAmount);
+tokensClaimed[msg.sender] = true;
+}
 
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
 
-    function burn(address from, uint256 amount) external {
-        _burn(from, amount);
-    }
+function createIssue(string calldata _issueDesc, uint256 _quorum)
+external
+returns (uint256)
+{
+if (balanceOf(msg.sender) == 0) {
+revert NoTokensHeld();
+}
+if (_quorum > totalSupply()) {
+revert QuorumTooHigh();
+}
+Issue storage _issue = issues.push();
+_issue.issueDesc = _issueDesc;
+_issue.quorum = _quorum;
+return issues.length - 1;
+}
+
+
+function getIssue(uint256 _issueId)
+external
+view
+returns (SerializedIssue memory)
+{
+Issue storage _issue = issues[_issueId];
+return
+SerializedIssue({
+voters: _issue.voters.values(),
+issueDesc: _issue.issueDesc,
+quorum: _issue.quorum,
+totalVotes: _issue.totalVotes,
+votesFor: _issue.votesFor,
+votesAgainst: _issue.votesAgainst,
+votesAbstain: _issue.votesAbstain,
+passed: _issue.passed,
+closed: _issue.closed
+});
+}
+
+
+function vote(uint256 _issueId, Vote _vote) public {
+Issue storage _issue = issues[_issueId];
+
+if (_issue.closed) {
+revert VotingClosed();
+}
+if (_issue.voters.contains(msg.sender)) {
+revert AlreadyVoted();
+}
+
+uint256 nTokens = balanceOf(msg.sender);
+if (nTokens == 0) {
+revert NoTokensHeld();
+}
+
+if (_vote == Vote.AGAINST) {
+_issue.votesAgainst += nTokens;
+} else if (_vote == Vote.FOR) {
+_issue.votesFor += nTokens;
+} else {
+_issue.votesAbstain += nTokens;
+}
+
+_issue.voters.add(msg.sender);
+_issue.totalVotes += nTokens;
+
+if (_issue.totalVotes >= _issue.quorum) {
+_issue.closed = true;
+if (_issue.votesFor > _issue.votesAgainst) {
+_issue.passed = true;
+}
+}
+}
 }
