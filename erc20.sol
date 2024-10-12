@@ -1,143 +1,167 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0; // Utilisation de Solidity 0.8.0 pour assurer la compatibilité
 
-pragma solidity ^0.8.17;
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount)
+        external
+        returns (bool);
+    function allowance(address owner, address spender)
+        external
+        view
+        returns (uint256);
+    function approve(address spender, uint256 amount)
+        external
+        returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount)
+        external
+        returns (bool);
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-
-contract WeightedVoting is ERC20 {
-string private salt = "Babased";
-using EnumerableSet for EnumerableSet.AddressSet;
-
-error TokensClaimed();
-error AllTokensClaimed();
-error NoTokensHeld();
-error QuorumTooHigh();
-error AlreadyVoted();
-error VotingClosed();
-
-struct Issue {
-EnumerableSet.AddressSet voters;
-string issueDesc;
-uint256 quorum;
-uint256 totalVotes;
-uint256 votesFor;
-uint256 votesAgainst;
-uint256 votesAbstain;
-bool passed;
-bool closed;
-}
-struct SerializedIssue {
-address[] voters;
-string issueDesc;
-uint256 quorum;
-uint256 totalVotes;
-uint256 votesFor;
-uint256 votesAgainst;
-uint256 votesAbstain;
-bool passed;
-bool closed;
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(
+        address indexed owner, address indexed spender, uint256 value
+    );
 }
 
-enum Vote {
-AGAINST,
-FOR,
-ABSTAIN
-}
-Issue[] internal issues;
-mapping(address => bool) public tokensClaimed;
-uint256 public maxSupply = 1000000;
-uint256 public claimAmount = 100;
-string saltt = "any";
+contract ERC20Token is IERC20 {
+    string public name;
+    string public symbol;
+    uint8 public decimals;
 
-constructor(string memory _name, string memory _symbol)
-ERC20(_name, _symbol)
-{
-issues.push();
-}
+    uint256 private _totalSupply;
+    mapping(address => uint256) private _balances;
+    mapping(address => mapping(address => uint256)) private _allowances;
 
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        uint8 _decimals,
+        uint256 initialSupply
+    ) {
+        name = _name;
+        symbol = _symbol;
+        decimals = _decimals;
+        _mint(msg.sender, initialSupply * 10 ** uint256(decimals));
+    }
 
-function claim() public {
-if (totalSupply() + claimAmount > maxSupply) {
-revert AllTokensClaimed();
-}
-if (tokensClaimed[msg.sender]) {
-revert TokensClaimed();
-}
-_mint(msg.sender, claimAmount);
-tokensClaimed[msg.sender] = true;
-}
+    function totalSupply() external view override returns (uint256) {
+        return _totalSupply;
+    }
 
+    function balanceOf(address account)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return _balances[account];
+    }
 
-function createIssue(string calldata _issueDesc, uint256 _quorum)
-external
-returns (uint256)
-{
-if (balanceOf(msg.sender) == 0) {
-revert NoTokensHeld();
-}
-if (_quorum > totalSupply()) {
-revert QuorumTooHigh();
-}
-Issue storage _issue = issues.push();
-_issue.issueDesc = _issueDesc;
-_issue.quorum = _quorum;
-return issues.length - 1;
-}
+    function transfer(address recipient, uint256 amount)
+        external
+        override
+        returns (bool)
+    {
+        _transfer(msg.sender, recipient, amount);
+        return true;
+    }
 
+    function allowance(address owner, address spender)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return _allowances[owner][spender];
+    }
 
-function getIssue(uint256 _issueId)
-external
-view
-returns (SerializedIssue memory)
-{
-Issue storage _issue = issues[_issueId];
-return
-SerializedIssue({
-voters: _issue.voters.values(),
-issueDesc: _issue.issueDesc,
-quorum: _issue.quorum,
-totalVotes: _issue.totalVotes,
-votesFor: _issue.votesFor,
-votesAgainst: _issue.votesAgainst,
-votesAbstain: _issue.votesAbstain,
-passed: _issue.passed,
-closed: _issue.closed
-});
-}
+    function approve(address spender, uint256 amount)
+        external
+        override
+        returns (bool)
+    {
+        _approve(msg.sender, spender, amount);
+        return true;
+    }
 
+    function transferFrom(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        external
+        override
+        returns (bool)
+    {
+        _transfer(sender, recipient, amount);
 
-function vote(uint256 _issueId, Vote _vote) public {
-Issue storage _issue = issues[_issueId];
+        uint256 currentAllowance = _allowances[sender][msg.sender];
+        require(
+            currentAllowance >= amount,
+            "ERC20: transfert amount exceeds allowance"
+        );
+        unchecked {
+            _approve(sender, msg.sender, currentAllowance - amount);
+        }
 
-if (_issue.closed) {
-revert VotingClosed();
-}
-if (_issue.voters.contains(msg.sender)) {
-revert AlreadyVoted();
-}
+        return true;
+    }
 
-uint256 nTokens = balanceOf(msg.sender);
-if (nTokens == 0) {
-revert NoTokensHeld();
-}
+    // Fonctions internes pour gérer les transferts, mint et burn
+    function _transfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    )
+        internal
+    {
+        require(sender != address(0), "ERC20: transfert from the zero address");
+        require(recipient != address(0), "ERC20: transfert to the zero address");
+        require(_balances[sender] >= amount, "ERC20: balance insuffisante");
 
-if (_vote == Vote.AGAINST) {
-_issue.votesAgainst += nTokens;
-} else if (_vote == Vote.FOR) {
-_issue.votesFor += nTokens;
-} else {
-_issue.votesAbstain += nTokens;
-}
+        _balances[sender] -= amount;
+        _balances[recipient] += amount;
+        emit Transfer(sender, recipient, amount);
+    }
 
-_issue.voters.add(msg.sender);
-_issue.totalVotes += nTokens;
+    function _mint(address account, uint256 amount)
+        internal
+    {
+        require(account != address(0), "ERC20: mint to the zero address");
 
-if (_issue.totalVotes >= _issue.quorum) {
-_issue.closed = true;
-if (_issue.votesFor > _issue.votesAgainst) {
-_issue.passed = true;
-}
-}
-}
+        _totalSupply += amount;
+        _balances[account] += amount;
+        emit Transfer(address(0), account, amount);
+    }
+
+    function _approve(
+        address owner,
+        address spender,
+        uint256 amount
+    )
+        internal
+    {
+        require(owner != address(0), "ERC20: approve from the zero address");
+        require(spender != address(0), "ERC20: approve to the zero address");
+
+        _allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+
+    // Fonctions publiques pour mint et burn (si nécessaire)
+    function mint(address account, uint256 amount)
+        external
+    {
+        _mint(account, amount);
+    }
+
+    function burn(uint256 amount)
+        external
+    {
+        require(_balances[msg.sender] >= amount, "ERC20: burn amount exceeds balance");
+        _balances[msg.sender] -= amount;
+        _totalSupply -= amount;
+        emit Transfer(msg.sender, address(0), amount);
+    }
 }
